@@ -54,8 +54,12 @@ func buildHandler(state *State) http.Handler {
 	ws := newWSHub(state)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ws" {
+		switch r.URL.Path {
+		case "/ws":
 			ws.serve(w, r)
+			return
+		case "/ws/job":
+			ws.serveJobStream(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)

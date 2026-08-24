@@ -35,6 +35,7 @@ type Manager struct {
 	mu       sync.Mutex
 	runners  map[string]*Runner
 	onFinish func(JobCompletion)
+	onOutput func(jobID, stream, content string)
 }
 
 func NewManager(s *Store, workdir string) *Manager {
@@ -45,6 +46,23 @@ func (m *Manager) SetCompletionHandler(fn func(JobCompletion)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onFinish = fn
+}
+
+// SetOutputHandler registers a hook invoked for every output row appended to a
+// promoted job (streaming to per-job subscribers, not broadcast).
+func (m *Manager) SetOutputHandler(fn func(jobID, stream, content string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onOutput = fn
+}
+
+func (m *Manager) emitOutput(jobID, stream, content string) {
+	m.mu.Lock()
+	handler := m.onOutput
+	m.mu.Unlock()
+	if handler != nil {
+		handler(jobID, stream, content)
+	}
 }
 
 func randomJobID() string {
@@ -113,6 +131,7 @@ func (r *Runner) appendRow(stream, content string) {
 	r.rows = append(r.rows, OutputRow{Content: content, Stream: stream, TS: time.Now().UnixNano()})
 	if r.promoted {
 		r.mgr.store.AppendRow(r.jobID, stream, content)
+		r.mgr.emitOutput(r.jobID, stream, content)
 	}
 }
 

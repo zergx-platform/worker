@@ -115,6 +115,14 @@ func (s *Store) rowsFor(jobID, stream string) []OutputRow {
 	return filtered
 }
 
+// Rows returns a snapshot of a job's interleaved output rows, for stream
+// history replay.
+func (s *Store) Rows(jobID string) []OutputRow {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]OutputRow(nil), s.output[jobID]...)
+}
+
 func (s *Store) OutputRaw(jobID, stream string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

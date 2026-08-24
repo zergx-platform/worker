@@ -23,16 +23,16 @@ func newWSHub(st *State) *wsHub {
 	h := &wsHub{
 		state:   st,
 		clients: map[*wsClient]bool{},
-		streams: map[string]map[*wsClient]bool{},
+		sseSubs: map[string]map[chan sseEvent]struct{}{},
 	}
 	st.jobs.SetCompletionHandler(func(ev JobCompletion) {
 		b, _ := json.Marshal(ev)
 		h.broadcastEvent("job.completed", json.RawMessage(b))
-		// Per-job terminal subscribers also learn the job finished.
-		h.streamEvent(ev.JobID, "job.completed", ev)
+		// Per-job SSE subscribers also learn the job finished.
+		h.sseBroadcast(ev.JobID, "job.completed", ev)
 	})
 	st.jobs.SetOutputHandler(func(jobID, stream, content string) {
-		h.streamEvent(jobID, "job.output", map[string]string{
+		h.sseBroadcast(jobID, "job.output", map[string]string{
 			"job_id":  jobID,
 			"stream":  stream,
 			"content": content,
@@ -56,9 +56,6 @@ func (h *wsHub) serve(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		h.mu.Lock()
 		delete(h.clients, c)
-		for jid := range h.streams {
-			delete(h.streams[jid], c)
-		}
 		h.mu.Unlock()
 		conn.Close()
 	}()
@@ -72,37 +69,30 @@ func (h *wsHub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// serveJobStream is a dedicated terminal endpoint: it replays the job's
-// history (last 100 rows) then streams live job.output events for that job
-// only.
+// serveJobStream is a dedicated SSE endpoint: it replays the job's history
+// (last 100 rows) then streams live job.output events for that job only.
 func (h *wsHub) serveJobStream(w http.ResponseWriter, r *http.Request) {
 	jobID := r.URL.Query().Get("job_id")
 	if jobID == "" {
 		http.Error(w, "job_id required", http.StatusBadRequest)
 		return
 	}
-	up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	conn, err := up.Upgrade(w, r, nil)
-	if err != nil {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	c := &wsClient{conn: conn}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
-	h.mu.Lock()
-	if h.streams[jobID] == nil {
-		h.streams[jobID] = map[*wsClient]bool{}
+	writeEvent := func(event string, params any) {
+		b, _ := json.Marshal(params)
+		_, _ = w.Write([]byte("event: " + event + "\ndata: " + string(b) + "\n\n"))
+		flusher.Flush()
 	}
-	h.streams[jobID][c] = true
-	h.mu.Unlock()
-
-	defer func() {
-		h.mu.Lock()
-		if subs := h.streams[jobID]; subs != nil {
-			delete(subs, c)
-		}
-		h.mu.Unlock()
-		conn.Close()
-	}()
 
 	// Replay history: last 100 rows, then mark the end of replay.
 	rows := h.state.store.Rows(jobID)
@@ -111,17 +101,20 @@ func (h *wsHub) serveJobStream(w http.ResponseWriter, r *http.Request) {
 		replay = replay[len(replay)-100:]
 	}
 	for _, row := range replay {
-		c.sendJSON(map[string]any{
-			"event":  "job.output",
-			"params": map[string]string{"job_id": jobID, "stream": row.Stream, "content": row.Content},
-		})
+		writeEvent("job.output", map[string]string{"job_id": jobID, "stream": row.Stream, "content": row.Content})
 	}
-	c.sendJSON(map[string]any{"event": "job.history_end", "params": map[string]int{"total": len(rows), "replayed": len(replay)}})
+	writeEvent("job.history_end", map[string]int{"total": len(rows), "replayed": len(replay)})
 
-	// Drain the socket until the client disconnects (keepalive read loop).
+	ch, unsub := h.sseSubscribe(jobID)
+	defer unsub()
+
+	ctx := r.Context()
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		select {
+		case <-ctx.Done():
 			return
+		case ev := <-ch:
+			writeEvent(ev.Event, ev.Params)
 		}
 	}
 }

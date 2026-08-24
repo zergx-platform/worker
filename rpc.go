@@ -196,8 +196,11 @@ func (h *wsHub) cmdJobWait(params map[string]json.RawMessage) (any, string) {
 	if p.TimeoutMs <= 0 {
 		p.TimeoutMs = 30_000
 	}
-	if p.TimeoutMs > 55_000 {
-		p.TimeoutMs = 55_000
+	// Cap at 60s: the caller's WS read deadline (ops-extension CommandOnce)
+	// is 65s, so a 60s wait must always respond before the client gives up.
+	const jobWaitMaxMs = 60_000
+	if p.TimeoutMs > jobWaitMaxMs {
+		p.TimeoutMs = jobWaitMaxMs
 	}
 
 	h.state.jobs.mu.Lock()

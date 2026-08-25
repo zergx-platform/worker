@@ -344,8 +344,8 @@ func TestExecuteJobLifecycleContract(t *testing.T) {
 	}
 
 	// Align rev out-of-band via HTTP (same as lib-ai worker-sync), then
-	// execute: fast commands complete synchronously with merged output
-	// and are NOT registered as jobs (no job_id, no completed event).
+	// execute: every command is registered as a backgrounded job (no
+	// fast/slow split), so the response carries job_id + backgrounded.
 	setStateRevHttp(t, srv, "rev-x")
 	resp2 := rpcCall(t, c, 2, "execute", map[string]any{"command": "echo contract-hello", "rev": "rev-x"})
 	res2, ok := resp2["result"].(map[string]any)
@@ -355,27 +355,31 @@ func TestExecuteJobLifecycleContract(t *testing.T) {
 	if _, hasErr := resp2["error"]; hasErr {
 		t.Fatalf("unexpected error field: %v", resp2)
 	}
-	if ec, ok := res2["exit_code"].(float64); !ok || int(ec) != 0 {
-		t.Fatalf("sync exit_code = %v (%T), want number 0", res2["exit_code"], res2["exit_code"])
+	jobID, _ := res2["job_id"].(string)
+	if jobID == "" || res2["backgrounded"] != true {
+		t.Fatalf("execute result = %v, want job_id + backgrounded:true", res2)
 	}
-	out, ok := res2["output"].(string)
-	if !ok || !strings.Contains(out, "contract-hello") {
-		t.Fatalf("sync output = %v, want merged output containing marker", res2["output"])
-	}
-	if _, hasJob := res2["job_id"]; hasJob {
-		t.Fatalf("fast command must not return job_id: %v", res2)
+	if _, hasOutput := res2["output"]; hasOutput {
+		t.Fatalf("execute must not return a merged output field: %v", res2)
 	}
 
-	// jobs list stays empty and no completed event was broadcast.
+	// A job was registered (no longer an empty list) and, once the command
+	// completes, a job.completed event is broadcast.
 	jr := rpcCall(t, c, 3, "jobs", map[string]any{})
 	if jres, ok := jr["result"].(map[string]any); ok {
-		if j, ok := jres["jobs"].([]any); !ok || len(j) != 0 {
-			t.Fatalf("jobs after sync exec = %v, want empty", jres["jobs"])
+		if j, ok := jres["jobs"].([]any); !ok || len(j) == 0 {
+			t.Fatalf("jobs after execute = %v, want non-empty", jres["jobs"])
 		}
 	}
-	_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	if _, _, err := c.ReadMessage(); err == nil {
-		t.Fatal("sync execution must not broadcast job.completed")
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		_, msg, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("expected job.completed broadcast, got %v", err)
+		}
+		if strings.Contains(string(msg), "job.completed") {
+			break
+		}
 	}
 	_ = c.SetReadDeadline(time.Time{})
 }
@@ -405,11 +409,10 @@ func TestJobsHttpContract(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-j")
-	os.Setenv("WORKER_SYNC_WAIT_MS", "200")
-	defer os.Unsetenv("WORKER_SYNC_WAIT_MS")
 
-	// sleep exceeds the shortened sync window -> backgrounded with jid.
-	resp := rpcCall(t, c, 1, "execute", map[string]any{"command": "sleep 2", "rev": "rev-j"})
+	// Every command is backgrounded as a job (no fast/slow split). A long
+	// sleep keeps the job running through the HTTP + kill assertions below.
+	resp := rpcCall(t, c, 1, "execute", map[string]any{"command": "sleep 30", "rev": "rev-j"})
 	res, ok := resp["result"].(map[string]any)
 	if !ok {
 		t.Fatal(resp)
@@ -476,8 +479,6 @@ func TestKillContract(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-k")
-	os.Setenv("WORKER_SYNC_WAIT_MS", "200")
-	defer os.Unsetenv("WORKER_SYNC_WAIT_MS")
 	resp := rpcCall(t, c, 1, "execute", map[string]any{"command": "sleep 30", "rev": "rev-k"})
 	res, ok := resp["result"].(map[string]any)
 	if !ok {
@@ -581,15 +582,25 @@ func TestUtf8ChunkingContract(t *testing.T) {
 	if !ok {
 		t.Fatal(resp)
 	}
-	if ec, ok := res["exit_code"].(float64); !ok || int(ec) != 0 {
-		t.Fatalf("exit_code = %v", res["exit_code"])
+	jid, _ := res["job_id"].(string)
+	if jid == "" {
+		t.Fatalf("execute must return job_id: %v", res)
 	}
-	stdout, _ := res["output"].(string)
+	w := rpcCall(t, c, 2, "job_wait", map[string]any{"job_id": jid, "timeout_ms": 5000})
+	if st, _ := w["result"].(map[string]any)["state"].(string); st != "done" {
+		t.Fatalf("job_wait = %v", w["result"])
+	}
+	out := rpcCall(t, c, 3, "job_output", map[string]any{"job_id": jid, "stream": "all", "offset": 0, "limit": 500})
+	lines := out["result"].(map[string]any)["lines"].([]any)
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(l.(string))
+	}
 	// 300 repetitions of a multibyte marker streamed through 4096-byte
 	// pipe chunks must survive intact (B8 regression).
 	want := strings.Repeat(marker, 300)
-	if stdout != want {
-		t.Fatalf("output corrupted by chunk boundary: got %d bytes want %d", len(stdout), len(want))
+	if sb.String() != want {
+		t.Fatalf("output corrupted by chunk boundary: got %d bytes want %d", sb.Len(), len(want))
 	}
 }
 
@@ -611,10 +622,7 @@ func TestJobOutputNoReserveOfLastLine(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-nores")
-	os.Setenv("WORKER_SYNC_WAIT_MS", "200")
-	defer os.Unsetenv("WORKER_SYNC_WAIT_MS")
 
-	// sleep pushes printf past the sync window so it registers as a job.
 	resp := rpcCall(t, c, 1, "execute", map[string]any{"command": "sleep 0.5 && printf 'l1\\nl2\\n'", "rev": "rev-nores"})
 	res, ok := resp["result"].(map[string]any)
 	if !ok {

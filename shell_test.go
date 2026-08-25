@@ -18,14 +18,46 @@ func mustJSON(t *testing.T, v any) []byte {
 	return b
 }
 
-func fastSync(t *testing.T) {
-	t.Helper()
-	t.Setenv("WORKER_SYNC_WAIT_MS", "200")
-}
 
 func execResult(t *testing.T, c *websocket.Conn, id int, rev, cmd string) map[string]any {
 	t.Helper()
 	return rpcCall(t, c, id, "execute", map[string]any{"command": cmd, "rev": rev})["result"].(map[string]any)
+}
+
+// execWait runs a command, waits for its job to finish, and returns the
+// merged output + exit code (the post-split contract: execute yields a job,
+// output is fetched via job_output).
+func execWait(t *testing.T, c *websocket.Conn, id int, rev, cmd string) (string, int) {
+	t.Helper()
+	r := execResult(t, c, id, rev, cmd)
+	jid, _ := r["job_id"].(string)
+	if jid == "" {
+		t.Fatalf("execute must return job_id, got %v", r)
+	}
+	w := rpcCall(t, c, id+1000, "job_wait", map[string]any{"job_id": jid, "timeout_ms": 5000})
+	wres := w["result"].(map[string]any)
+	state, _ := wres["state"].(string)
+	if state != "done" && state != "failed" && state != "killed" {
+		t.Fatalf("job_wait = %v, want terminal state", wres)
+	}
+	o := rpcCall(t, c, id+2000, "job_output", map[string]any{"job_id": jid, "stream": "all", "offset": 0, "limit": 500})
+	ores := o["result"].(map[string]any)
+	lines, _ := ores["lines"].([]any)
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(l.(string))
+	}
+	exit := -1
+	if j := rpcCall(t, c, id+3000, "jobs", map[string]any{}); true {
+		jres := j["result"].(map[string]any)["jobs"].([]any)
+		for _, e := range jres {
+			m := e.(map[string]any)
+			if m["id"] == jid {
+				exit = int(m["exit_code"].(float64))
+			}
+		}
+	}
+	return sb.String(), exit
 }
 
 func TestShellRejectMatrix(t *testing.T) {
@@ -68,46 +100,46 @@ func TestShellAcceptMatrix(t *testing.T) {
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-a")
 
-	r1 := execResult(t, c, 1, "rev-a", "echo one && echo two")
-	if o := r1["output"].(string); !strings.Contains(o, "one") || !strings.Contains(o, "two") {
-		t.Fatalf("&& chain output = %q", o)
+	o1, _ := execWait(t, c, 1, "rev-a", "echo one && echo two")
+	if !strings.Contains(o1, "one") || !strings.Contains(o1, "two") {
+		t.Fatalf("&& chain output = %q", o1)
 	}
 
-	r2 := execResult(t, c, 2, "rev-a", "false || echo fallback")
-	if o := r2["output"].(string); !strings.Contains(o, "fallback") {
-		t.Fatalf("|| fallback output = %q", o)
+	o2, _ := execWait(t, c, 2, "rev-a", "false || echo fallback")
+	if !strings.Contains(o2, "fallback") {
+		t.Fatalf("|| fallback output = %q", o2)
 	}
 
-	r3 := execResult(t, c, 3, "rev-a", "echo 'a|b>c&d'")
-	if o := r3["output"].(string); !strings.Contains(o, "a|b>c&d") {
-		t.Fatalf("quoted metachars must stay literal, got %q", o)
+	o3, _ := execWait(t, c, 3, "rev-a", "echo 'a|b>c&d'")
+	if !strings.Contains(o3, "a|b>c&d") {
+		t.Fatalf("quoted metachars must stay literal, got %q", o3)
 	}
 
 	writeTestFile(t, "m.txt", "alpha\nbeta\ngamma\n")
-	r4 := execResult(t, c, 4, "rev-a", "grep -E 'lph|mm' m.txt")
-	if o := r4["output"].(string); !strings.Contains(o, "alpha") || !strings.Contains(o, "gamma") || strings.Contains(o, "beta") {
-		t.Fatalf("quoted regex pipe must pass through, got %q", o)
+	o4, _ := execWait(t, c, 4, "rev-a", "grep -E 'lph|mm' m.txt")
+	if !strings.Contains(o4, "alpha") || !strings.Contains(o4, "gamma") || strings.Contains(o4, "beta") {
+		t.Fatalf("quoted regex pipe must pass through, got %q", o4)
 	}
 
-	r5 := execResult(t, c, 5, "rev-a", "echo x\necho y")
-	if o := r5["output"].(string); !strings.Contains(o, "x") || !strings.Contains(o, "y") {
-		t.Fatalf("newline as ; output = %q", o)
+	o5, _ := execWait(t, c, 5, "rev-a", "echo x\necho y")
+	if !strings.Contains(o5, "x") || !strings.Contains(o5, "y") {
+		t.Fatalf("newline as ; output = %q", o5)
 	}
 
 	// third-party commands stay allowed (no command blacklist).
-	r6 := execResult(t, c, 6, "rev-a", "kill -l")
-	if ec := int(r6["exit_code"].(float64)); ec != 0 {
-		t.Fatalf("kill -l exit = %d, want 0", ec)
+	_, ec6 := execWait(t, c, 6, "rev-a", "kill -l")
+	if ec6 != 0 {
+		t.Fatalf("kill -l exit = %d, want 0", ec6)
 	}
 
 	// variable-expansion-time rejections surface as exit 2 + guidance.
 	for _, cmd := range []string{"echo $?", "echo $$"} {
-		rr := execResult(t, c, 7, "rev-a", cmd)
-		if ec := int(rr["exit_code"].(float64)); ec != 2 {
-			t.Fatalf("cmd %q exit = %v, want 2", cmd, rr["exit_code"])
+		oo, ec := execWait(t, c, 7, "rev-a", cmd)
+		if ec != 2 {
+			t.Fatalf("cmd %q exit = %v, want 2", cmd, ec)
 		}
-		if o := rr["output"].(string); !strings.Contains(o, "special shell parameters") {
-			t.Fatalf("cmd %q output = %q, want guidance", cmd, o)
+		if !strings.Contains(oo, "special shell parameters") {
+			t.Fatalf("cmd %q output = %q, want guidance", cmd, oo)
 		}
 	}
 }
@@ -117,35 +149,31 @@ func TestSessionPersistence(t *testing.T) {
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-s")
 
-	execResult(t, c, 1, "rev-s", "export GREETING=hello-world")
-	r := execResult(t, c, 2, "rev-s", "echo $GREETING")
-	if o := r["output"].(string); !strings.Contains(o, "hello-world") {
+	execWait(t, c, 1, "rev-s", "export GREETING=hello-world")
+	o, _ := execWait(t, c, 2, "rev-s", "echo $GREETING")
+	if !strings.Contains(o, "hello-world") {
 		t.Fatalf("export must persist across executes, got %q", o)
 	}
 
-	execResult(t, c, 3, "rev-s", "unset GREETING")
-	r2 := execResult(t, c, 4, "rev-s", "echo [$GREETING]")
-	if o := r2["output"].(string); !strings.Contains(o, "[]") {
-		t.Fatalf("unset must remove the variable, got %q", o)
+	execWait(t, c, 3, "rev-s", "unset GREETING")
+	o2, _ := execWait(t, c, 4, "rev-s", "echo [$GREETING]")
+	if !strings.Contains(o2, "[]") {
+		t.Fatalf("unset must remove the variable, got %q", o2)
 	}
 
 	writeTestFile(t, "sub/deep.txt", "x")
-	execResult(t, c, 5, "rev-s", "cd sub")
-	r3 := execResult(t, c, 6, "rev-s", "cat deep.txt")
-	if o := r3["output"].(string); !strings.Contains(o, "x") {
-		t.Fatalf("cd must persist across executes, got %q", o)
+	execWait(t, c, 5, "rev-s", "cd sub")
+	o3, _ := execWait(t, c, 6, "rev-s", "cat deep.txt")
+	if !strings.Contains(o3, "x") {
+		t.Fatalf("cd must persist across executes, got %q", o3)
 	}
-	if ec := int(r3["exit_code"].(float64)); ec != 0 {
-		t.Fatalf("cat exit = %d", ec)
-	}
-	execResult(t, c, 7, "rev-s", "cd ..")
+	execWait(t, c, 7, "rev-s", "cd ..")
 }
 
 func TestBackgroundedPromotion(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-b")
-	fastSync(t)
 
 	r := execResult(t, c, 1, "rev-b", "sleep 1")
 	jid, _ := r["job_id"].(string)
@@ -176,7 +204,6 @@ func TestJobStdinRoundtrip(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-i")
-	fastSync(t)
 
 	// cat blocks on stdin, gets backgrounded, then we feed it.
 	r := execResult(t, c, 1, "rev-i", "cat")
@@ -207,7 +234,6 @@ func TestJobOutputGrepPagination(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-g")
-	fastSync(t)
 
 	// seq writes 30 lines after a short sleep -> backgrounded job.
 	r := execResult(t, c, 1, "rev-g", "sleep 0.5 && seq 1 30")
@@ -258,7 +284,6 @@ func TestEventTailTruncation(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-t")
-	fastSync(t)
 
 	// ~57KB of output completes fast but exceeds the 16KB sync cap, so it
 	// is promoted and the completed event must carry only the tail. The
@@ -305,18 +330,17 @@ func TestEventTailTruncation(t *testing.T) {
 	}
 }
 
-func TestSyncMergedStreams(t *testing.T) {
+func TestMergedStreams(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c := dialWs(t, srv)
 	setStateRevHttp(t, srv, "rev-m")
 
-	// stdout and stderr both land in the merged sync output.
-	r := execResult(t, c, 1, "rev-m", "echo to-out && ls /definitely-missing-file")
-	if o := r["output"].(string); !strings.Contains(o, "to-out") || !strings.Contains(o, "No such file") {
+	// stdout and stderr both land in the merged job output.
+	o, ec := execWait(t, c, 1, "rev-m", "echo to-out && ls /definitely-missing-file")
+	if !strings.Contains(o, "to-out") || !strings.Contains(o, "No such file") {
 		t.Fatalf("merged output missing streams: %q", o)
 	}
-	if ec := int(r["exit_code"].(float64)); ec == 0 {
+	if ec == 0 {
 		t.Fatalf("exit_code should be nonzero after ls failure, got %d", ec)
 	}
-	_ = time.Second
 }

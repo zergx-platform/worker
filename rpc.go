@@ -5,24 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
-const defaultSyncWaitMs = 10_000
-const syncOutputCap = 16 << 10
-
-func syncWaitMs() int {
-	if v := os.Getenv("WORKER_SYNC_WAIT_MS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 60_000 {
-			return n
-		}
-	}
-	return defaultSyncWaitMs
-}
-
-const backgroundNote = "job %s exceeded the sync wait window and was moved to the background; inspect output with job_output (offset/limit/grep), list jobs with job_list, wait via job_wait, send input via job_stdin, stop via job_kill"
+const backgroundNote = "job %s is running; inspect output with job_output (offset/limit/grep), list jobs with job_list, wait via job_wait, send input via job_stdin, stop via job_kill"
 
 func (h *wsHub) cmdExecute(params map[string]json.RawMessage) (any, string) {
 	var p struct {
@@ -44,21 +31,13 @@ func (h *wsHub) cmdExecute(params map[string]json.RawMessage) (any, string) {
 		return nil, "shell: " + parseErr
 	}
 
-	if runner.Wait(time.Duration(syncWaitMs()) * time.Millisecond) {
-		// Flush any trailing partial line before reading merged output.
-		runner.stdoutFlush()
-		runner.stderrFlush()
-		output := runner.Output()
-		if len(output) <= syncOutputCap {
-			resp := map[string]any{"exit_code": runner.ExitCode(), "output": output}
-			if runner.truncFlag() {
-				resp["output_truncated"] = true
-			}
-			return resp, ""
-		}
+	// Every command is registered as a job (no fast/slow split): the caller
+	// subscribes to the per-job SSE stream for output, which replays history
+	// for instantly-finished commands and streams live deltas for long ones.
+	jid, perr := runner.Promote()
+	if perr != nil {
+		return nil, perr.Error()
 	}
-
-	jid := runner.Promote()
 	return map[string]any{
 		"job_id":       jid,
 		"backgrounded": true,
@@ -273,9 +252,22 @@ func (h *wsHub) cmdJobStdin(params map[string]json.RawMessage) (any, string) {
 		}
 		return nil, "job is not running"
 	}
-	n, err := runner.WriteStdin([]byte(p.Data), p.Close)
-	if err != nil {
-		return nil, "job_stdin: " + err.Error()
+	// The runner's stdin pipe is installed asynchronously by the execution
+	// goroutine (cmd.Start() precedes the write-end handoff). A job_stdin
+	// arriving right after a backgrounded execute may outrun that handoff:
+	// poll briefly instead of failing with "not reading stdin".
+	var n int
+	var werr error
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		n, werr = runner.WriteStdin([]byte(p.Data), p.Close)
+		if werr != errNoStdin || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if werr != nil {
+		return nil, "job_stdin: " + werr.Error()
 	}
 	return map[string]any{"written": n, "closed": p.Close}, ""
 }

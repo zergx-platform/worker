@@ -180,12 +180,6 @@ func (r *Runner) lookupVar(name string) string {
 	return os.Getenv(name)
 }
 
-func (r *Runner) truncFlag() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.truncated
-}
-
 func (r *Runner) run() {
 	lastExit := 0
 	var lastErr string
@@ -296,13 +290,14 @@ func (r *Runner) Wait(timeout time.Duration) bool {
 	}
 }
 
-// Promote registers the runner as a job and returns its jid.
-func (r *Runner) Promote() string {
+// Promote registers the runner as a job and returns its jid. Returns an error
+// when the job store refuses the registration (too many running jobs).
+func (r *Runner) Promote() (string, error) {
 	r.mu.Lock()
 	if r.promoted {
 		jid := r.jobID
 		r.mu.Unlock()
-		return jid
+		return jid, nil
 	}
 	r.promoted = true
 	jid := randomJobID()
@@ -312,7 +307,13 @@ func (r *Runner) Promote() string {
 	exit := r.exit
 	r.mu.Unlock()
 
-	r.mgr.store.InsertJob(&Job{ID: jid, Command: r.plainCommand(), State: "running", ExitCode: -1, StartedAt: r.started})
+	if err := r.mgr.store.InsertJob(&Job{ID: jid, Command: r.plainCommand(), State: "running", ExitCode: -1, StartedAt: r.started}); err != nil {
+		r.mu.Lock()
+		r.promoted = false
+		r.jobID = ""
+		r.mu.Unlock()
+		return "", err
+	}
 	for _, row := range rows {
 		r.mgr.store.AppendRow(jid, row.Stream, row.Content)
 	}
@@ -322,7 +323,7 @@ func (r *Runner) Promote() string {
 	if finished {
 		r.mgr.finalizeRunner(r, exit, "")
 	}
-	return jid
+	return jid, nil
 }
 
 func (r *Runner) plainCommand() string {
@@ -343,17 +344,6 @@ func (r *Runner) plainCommand() string {
 		}
 	}
 	return out
-}
-
-// Output returns the interleaved merged output collected so far.
-func (r *Runner) Output() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var b []byte
-	for _, row := range r.rows {
-		b = append(b, row.Content...)
-	}
-	return string(b)
 }
 
 // stdoutFlush / stderrFlush flush any buffered partial line on the writer so
@@ -511,9 +501,23 @@ func (m *Manager) KillJob(jid string) bool {
 	if r == nil {
 		return false
 	}
-	ok := r.Kill()
-	if ok {
-		m.store.MarkKilled(jid)
+	// The subprocess is registered asynchronously by the execution goroutine
+	// (cmd.Start() precedes the proc handoff). A kill arriving right after a
+	// backgrounded execute may outrun that handoff: poll briefly instead of
+	// failing while the process is still starting.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if r.Kill() {
+			m.store.MarkKilled(jid)
+			return true
+		}
+		// If the runner already finished on its own, nothing to kill.
+		if r.Finished() {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	return ok
 }

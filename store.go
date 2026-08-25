@@ -1,10 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
+
+// Job store retention: finished jobs are evicted once their count exceeds
+// maxJobHistory; running jobs are never evicted, but a soft cap on running
+// jobs (maxRunningJobs) defends against zombie-process accumulation.
+const maxJobHistory = 500
+const maxRunningJobs = 1000
 
 type Job struct {
 	ID         string  `json:"id"`
@@ -38,17 +46,73 @@ func NewStore() *Store {
 	}
 }
 
-func (s *Store) InsertJob(j *Job) {
+// InsertJob registers a job. Running jobs are never evicted, but are refused
+// beyond maxRunningJobs (zombie defence). Finished jobs are evicted oldest-
+// finish-first once they exceed maxJobHistory.
+func (s *Store) InsertJob(j *Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if j.State == "running" && s.countRunningLocked() >= maxRunningJobs {
+		return fmt.Errorf("too many running jobs (%d)", maxRunningJobs)
+	}
+
 	s.jobs[j.ID] = j
 	s.order = append(s.order, j.ID)
-	if len(s.order) > 100 {
-		oldest := s.order[0]
-		s.order = s.order[1:]
-		delete(s.jobs, oldest)
-		delete(s.output, oldest)
+	s.evictFinishedLocked()
+	return nil
+}
+
+func (s *Store) countRunningLocked() int {
+	n := 0
+	for _, id := range s.order {
+		if j, ok := s.jobs[id]; ok && j.State == "running" {
+			n++
+		}
 	}
+	return n
+}
+
+// evictFinishedLocked removes finished jobs (oldest finish first) beyond
+// maxJobHistory. Running jobs are skipped and never removed here.
+func (s *Store) evictFinishedLocked() {
+	type finished struct {
+		id     string
+		finish int64
+	}
+	var finishedJobs []finished
+	for _, id := range s.order {
+		j, ok := s.jobs[id]
+		if !ok || j.State == "running" {
+			continue
+		}
+		fin := int64(0)
+		if j.FinishedAt != nil {
+			fin = *j.FinishedAt
+		}
+		finishedJobs = append(finishedJobs, finished{id: id, finish: fin})
+	}
+	if len(finishedJobs) <= maxJobHistory {
+		return
+	}
+	sort.Slice(finishedJobs, func(i, k int) bool {
+		return finishedJobs[i].finish < finishedJobs[k].finish
+	})
+	excess := len(finishedJobs) - maxJobHistory
+	drop := map[string]bool{}
+	for i := 0; i < excess; i++ {
+		drop[finishedJobs[i].id] = true
+	}
+	kept := s.order[:0]
+	for _, id := range s.order {
+		if drop[id] {
+			delete(s.jobs, id)
+			delete(s.output, id)
+			continue
+		}
+		kept = append(kept, id)
+	}
+	s.order = kept
 }
 
 func (s *Store) GetJob(id string) *Job {

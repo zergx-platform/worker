@@ -105,6 +105,21 @@ func (h *wsHub) serveJobStream(w http.ResponseWriter, r *http.Request) {
 	}
 	writeEvent("job.history_end", map[string]int{"total": len(rows), "replayed": len(replay)})
 
+	// Close a subscribe/replay race: the job may have finished (and its lone
+	// job.completed broadcast fired) between the history replay above and the
+	// live subscribe below. If so, the subscriber would otherwise hang until
+	// its timeout, mistaking a fast-failing command (e.g. exit 127) for a hung
+	// background job. Re-emit the terminal event from the persisted job state.
+	if j := h.state.store.GetJob(jobID); j != nil && j.State != "running" {
+		stdout, stderr, _ := h.state.store.Tails(jobID, eventOutputTail)
+		writeEvent("job.completed", map[string]any{
+			"exit_code": j.ExitCode,
+			"stdout":    stdout,
+			"stderr":    stderr,
+		})
+		return
+	}
+
 	ch, unsub := h.sseSubscribe(jobID)
 	defer unsub()
 

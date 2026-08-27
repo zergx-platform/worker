@@ -43,5 +43,5 @@ RUN sed -i -E 's#https?://deb\.debian\.org/debian#http://mirrors.aliyun.com/debi
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/worker-go /usr/local/bin/worker-go
-EXPOSE 8080
+EXPOSE 48080
 ENTRYPOINT ["worker-go"]

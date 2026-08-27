@@ -6,5 +6,5 @@ import (
 
 var (
 	workdir = env.Or("WORKER_WORKSPACE_ROOT", "/root/workspace")
-	port    = env.Or("WORKER_PORT", "8080")
+	port    = env.Or("WORKER_PORT", "48080")
 )

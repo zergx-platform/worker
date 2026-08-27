@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Sandbox worker: dynamically spawned by ops-extension (client-go) per session.
-ARG REGISTRY=rucoder-artifact.temp.10.199.64.20.nip.io
+ARG REGISTRY=artifact.zergx.svc.cluster.local
 FROM ${REGISTRY}/library/golang:1.26-alpine AS build
 ARG HTTP_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ARG HTTPS_PROXY=http://mihomo.develop.svc.cluster.local:7890
@@ -9,7 +9,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     NO_PROXY=localhost,127.0.0.1,.svc.cluster.local,.svc,.nip.io \
     GOINSECURE=forgejo.develop.10.199.64.20.nip.io \
     GOPRIVATE=forgejo.develop.10.199.64.20.nip.io \
-    GOPROXY=http://rucoder-artifact.temp.svc.cluster.local/pkgs/go \
+    GOPROXY=http://artifact.zergx.svc.cluster.local/pkgs/go \
     GOSUMDB=off \
     GOFLAGS=-mod=mod
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \

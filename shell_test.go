@@ -18,7 +18,6 @@ func mustJSON(t *testing.T, v any) []byte {
 	return b
 }
 
-
 func execResult(t *testing.T, c *websocket.Conn, id int, rev, cmd string) map[string]any {
 	t.Helper()
 	return rpcCall(t, c, id, "execute", map[string]any{"command": cmd, "rev": rev})["result"].(map[string]any)

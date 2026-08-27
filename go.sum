@@ -1,2 +1,4 @@
+forgejo.develop.10.199.64.20.nip.io/rucoder/go-shared v0.1.0 h1:/PUNWKMjfffLh2hklyDmEBRwYHwSaKWpFqikq3WeOL8=
+forgejo.develop.10.199.64.20.nip.io/rucoder/go-shared v0.1.0/go.mod h1:Q4OYQQ4mUFFmhj6h8y8kZedv6TDRmqG62QaQOvW6n1Y=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=

@@ -66,4 +66,3 @@ func (h *wsHub) sseSubscribe(jobID string) (chan sseEvent, func()) {
 		h.sseMu.Unlock()
 	}
 }
-

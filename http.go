@@ -2,44 +2,38 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"forgejo.develop.10.199.64.20.nip.io/rucoder/go-shared/jsonwrite"
 )
 
-func slogJSON(level int, msg string, fields ...any) {
-	_ = level
-	rec := map[string]any{"msg": msg}
-	for i := 0; i+1 < len(fields); i += 2 {
-		rec[fmt.Sprint(fields[i])] = fields[i+1]
-	}
-	b, _ := json.Marshal(rec)
-	log.Println(string(b))
-}
+// logger replaces the previous hand-rolled slogJSON (which discarded the
+// level); standard slog keeps JSON output with real severity levels.
+var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 func buildHandler(state *State) http.Handler {
 	store := state.store
 	jobs := state.jobs
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"healthy": true})
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "healthy": true})
 	})
 	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			writeJSON(w, 200, map[string]any{"jobs": jobsResponse(store)})
-			return
-		}
-		if r.Method == http.MethodDelete {
+		switch r.Method {
+		case http.MethodGet:
+			jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": jobsResponse(store)})
+		case http.MethodDelete:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			jid, _ := body["job_id"].(string)
-			writeJSON(w, 200, map[string]any{"ok": jobs.KillJob(jid)})
-			return
+			jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": jobs.KillJob(jid)})
+		default:
+			jsonwrite.JSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
 		}
-		writeJSON(w, 405, map[string]any{"error": "method not allowed"})
 	})
 	mux.HandleFunc("/api/v1/sync/check", func(w http.ResponseWriter, r *http.Request) {
 		handleSyncCheck(w, r, state)
@@ -68,10 +62,10 @@ func buildHandler(state *State) http.Handler {
 
 func main() {
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
-		slogJSON(0, "mkdir failed", "err", err)
+		logger.Error("mkdir failed", "err", err)
 	}
 	if err := os.Chdir(workdir); err != nil {
-		slogJSON(0, "chdir failed", "err", err)
+		logger.Error("chdir failed", "err", err)
 	}
 
 	store := NewStore()
@@ -82,16 +76,10 @@ func main() {
 		Addr:    "0.0.0.0:" + port,
 		Handler: buildHandler(state),
 	}
-	slogJSON(0, "recoder-worker listening", "port", port)
+	logger.Info("recoder-worker listening", "port", port)
 	if err := srv.ListenAndServe(); err != nil {
-		slogJSON(0, "server error", "err", err)
+		logger.Error("server error", "err", err)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 func jobsResponse(store *Store) []map[string]any {
@@ -121,7 +109,7 @@ func handleSyncCheck(w http.ResponseWriter, r *http.Request, st *State) {
 		Size int64  `json:"size"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&manifest); err != nil {
-		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		jsonwrite.JSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	manifestSet := map[string]bool{}
@@ -146,7 +134,7 @@ func handleSyncCheck(w http.ResponseWriter, r *http.Request, st *State) {
 	if rev != "" {
 		st.syncedRev = rev
 	}
-	writeJSON(w, 200, map[string]any{"missing": missing, "extra": extra})
+	jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "missing": missing, "extra": extra})
 }
 
 func handleSyncFiles(w http.ResponseWriter, r *http.Request, st *State) {
@@ -154,13 +142,15 @@ func handleSyncFiles(w http.ResponseWriter, r *http.Request, st *State) {
 	rev := r.URL.Query().Get("rev")
 	n, err := extractTarball(r.Body, root)
 	if err != nil {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
+		// Failed syncs are real errors: 5xx + {ok:false,error}, matching the
+		// gateway-wide status-code convention (memory/ops/jj-server).
+		jsonwrite.JSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	if rev != "" {
 		st.syncedRev = rev
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "files": n})
+	jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "files": n})
 }
 
 func handleFile(w http.ResponseWriter, r *http.Request, root string) {

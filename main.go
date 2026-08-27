@@ -1,17 +1,10 @@
 package main
 
 import (
-	"os"
+	"forgejo.develop.10.199.64.20.nip.io/rucoder/go-shared/env"
 )
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 var (
-	workdir = envOr("WORKER_WORKSPACE_ROOT", "/root/workspace")
-	port    = envOr("WORKER_PORT", "8080")
+	workdir = env.Or("WORKER_WORKSPACE_ROOT", "/root/workspace")
+	port    = env.Or("WORKER_PORT", "8080")
 )

@@ -284,14 +284,14 @@ func TestSyncFilesContract(t *testing.T) {
 		}
 	}
 
-	// Malformed gzip: old TS worker answered 200 {ok:false,error}; keep parity.
+	// Malformed gzip: sync failures are real errors — 500 + {ok:false,error}.
 	resp3, err := srv.Client().Post(srv.URL+"/api/v1/sync/files", "application/gzip", strings.NewReader("not-gzip"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp3.Body.Close()
-	if resp3.StatusCode != 200 {
-		t.Fatalf("malformed sync/files status = %d, want 200", resp3.StatusCode)
+	if resp3.StatusCode != 500 {
+		t.Fatalf("malformed sync/files status = %d, want 500", resp3.StatusCode)
 	}
 	var bad struct {
 		OK    bool   `json:"ok"`

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"forgejo.develop.10.199.64.20.nip.io/rucoder/go-shared/env"
+	"forgejo.develop.10.199.64.20.nip.io/zergx/go-shared/env"
 )
 
 var (

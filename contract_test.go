@@ -18,7 +18,7 @@ import (
 )
 
 // Contract tests: every assertion mirrors the TypeScript consumers in
-// recoder-neo — lib-executor/worker-channel.ts (RpcResponseSchema /
+// zergx — lib-executor/worker-channel.ts (RpcResponseSchema /
 // RpcEventSchema), lib-ai/tool-ops.ts (ExecuteResponseSchema /
 // JobCompletedParamsSchema), lib-ai/worker-sync.ts (sync/check manifest and
 // missing shape), server/container-routes.ts (jobs proxy, JobInfoSchema).

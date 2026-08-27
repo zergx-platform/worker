@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"forgejo.develop.10.199.64.20.nip.io/rucoder/go-shared/jsonwrite"
+	"forgejo.develop.10.199.64.20.nip.io/zergx/go-shared/jsonwrite"
 )
 
 // logger replaces the previous hand-rolled slogJSON (which discarded the
@@ -76,7 +76,7 @@ func main() {
 		Addr:    "0.0.0.0:" + port,
 		Handler: buildHandler(state),
 	}
-	logger.Info("recoder-worker listening", "port", port)
+	logger.Info("zergx-worker listening", "port", port)
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Error("server error", "err", err)
 	}

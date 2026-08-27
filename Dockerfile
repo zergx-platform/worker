@@ -13,7 +13,7 @@ ARG REGISTRY=artifact.zergx.svc.cluster.local
 # RUNTIME image below switches to debian (glibc + real coreutils), which is
 # what fixes the sandbox /bin/<cmd> exec failures.
 FROM ${REGISTRY}/library/golang:1.26-alpine AS build
-ARG HTTP_PROXY=http://mihomo.develop.svc.cluster.local:789
+ARG HTTP_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ARG HTTPS_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \

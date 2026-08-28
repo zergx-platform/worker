@@ -143,7 +143,7 @@ func handleSyncFiles(w http.ResponseWriter, r *http.Request, st *State) {
 	n, err := extractTarball(r.Body, root)
 	if err != nil {
 		// Failed syncs are real errors: 5xx + {ok:false,error}, matching the
-		// gateway-wide status-code convention (memory/ops/jj-server).
+		// gateway-wide status-code convention (memory/ops/jjlab).
 		jsonwrite.JSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

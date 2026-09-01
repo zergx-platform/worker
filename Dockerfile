@@ -6,7 +6,7 @@
 # alpine-busybox dynamic-loader ENONT /bin/<cmd> exec failures seen in the
 # sandbox. The Debian mirrors are pre-configured to Aliyun for fast in-cluster
 # package pulls.
-ARG REGISTRY=artifact.zergx.svc.cluster.local
+ARG REGISTRY=artifact.temp.svc.cluster.local
 # Build stage stays on golang:1.26-alpine: the trixie golang image is a
 # buildpack-deps variant whose ~102MB base layer cannot be pulled reliably
 # through the mihomo→docker.io egress (it truncates mid-download). Only the

@@ -6,13 +6,13 @@
 # alpine-busybox dynamic-loader ENONT /bin/<cmd> exec failures seen in the
 # sandbox. The Debian mirrors are pre-configured to Aliyun for fast in-cluster
 # package pulls.
-ARG REGISTRY=forgejo.develop.10.199.64.20.nip.io/root/
+ARG REGISTRY=forgejo.develop.10.199.64.20.nip.io/root
 # Build stage stays on golang:1.26-alpine: the trixie golang image is a
 # buildpack-deps variant whose ~102MB base layer cannot be pulled reliably
 # through the mihomo→docker.io egress (it truncates mid-download). Only the
 # RUNTIME image below switches to debian (glibc + real coreutils), which is
 # what fixes the sandbox /bin/<cmd> exec failures.
-FROM ${REGISTRY}/library/golang:1.26-alpine AS build
+FROM ${REGISTRY}/golang:1.26-alpine AS build
 ARG HTTP_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ARG HTTPS_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ENV HTTP_PROXY=${HTTP_PROXY} \
@@ -20,7 +20,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     NO_PROXY=localhost,127.0.0.1,.svc.cluster.local,.svc,.nip.io \
     GOINSECURE=forgejo.develop.10.199.64.20.nip.io \
     GOPRIVATE=forgejo.develop.10.199.64.20.nip.io \
-    GOPROXY=http://artifact.zergx.svc.cluster.local/pkgs/go \
+    GOPROXY=https://proxy.golang.org \
     GOSUMDB=off \
     GOFLAGS=-mod=mod
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
@@ -33,7 +33,7 @@ RUN go mod download
 COPY *.go ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/worker-go .
 
-FROM ${REGISTRY}/library/debian:trixie-slim
+FROM ${REGISTRY}/debian:trixie-slim
 # Pre-configure Aliyun mirrors for the sandbox (agents also `apt install` tools
 # inside sandboxes at runtime, e.g. go/gcc/build deps).
 RUN sed -i -E 's#https?://deb\.debian\.org/debian#http://mirrors.aliyun.com/debian#g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \

@@ -12,7 +12,7 @@ ARG REGISTRY=jj-lab.temp.svc.cluster.local
 # through the mihomo→docker.io egress (it truncates mid-download). Only the
 # RUNTIME image below switches to debian (glibc + real coreutils), which is
 # what fixes the sandbox /bin/<cmd> exec failures.
-FROM ${REGISTRY}/golang:1.26-alpine AS build
+FROM ${REGISTRY}/library/golang:1.26-alpine AS build
 ARG HTTP_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ARG HTTPS_PROXY=http://mihomo.develop.svc.cluster.local:7890
 ENV HTTP_PROXY=${HTTP_PROXY} \
@@ -33,7 +33,7 @@ RUN go mod download
 COPY *.go ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/worker-go .
 
-FROM ${REGISTRY}/debian:trixie-slim
+FROM ${REGISTRY}/library/debian:trixie-slim
 # Pre-configure Aliyun mirrors for the sandbox (agents also `apt install` tools
 # inside sandboxes at runtime, e.g. go/gcc/build deps).
 RUN sed -i -E 's#https?://deb\.debian\.org/debian#http://mirrors.aliyun.com/debian#g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \

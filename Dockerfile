@@ -6,7 +6,7 @@
 # alpine-busybox dynamic-loader ENONT /bin/<cmd> exec failures seen in the
 # sandbox. The Debian mirrors are pre-configured to Aliyun for fast in-cluster
 # package pulls.
-ARG REGISTRY=forgejo.develop.10.199.64.20.nip.io/root
+ARG REGISTRY=jj-lab.temp.svc.cluster.local
 # Build stage stays on golang:1.26-alpine: the trixie golang image is a
 # buildpack-deps variant whose ~102MB base layer cannot be pulled reliably
 # through the mihomo→docker.io egress (it truncates mid-download). Only the
@@ -20,7 +20,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     NO_PROXY=localhost,127.0.0.1,.svc.cluster.local,.svc,.nip.io \
     GOINSECURE=forgejo.develop.10.199.64.20.nip.io \
     GOPRIVATE=forgejo.develop.10.199.64.20.nip.io \
-    GOPROXY=https://proxy.golang.org \
+    GOPROXY=http://jj-lab.temp.svc.cluster.local/pkgs/go \
     GOSUMDB=off \
     GOFLAGS=-mod=mod
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \

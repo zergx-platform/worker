@@ -143,14 +143,19 @@ func (h *wsHub) cmdFileList(params map[string]json.RawMessage) (any, string) {
 		return nil, "file_list: " + err.Error()
 	}
 	var rels []string
+	var single bool
 	if info.IsDir() {
 		rels = listWorkspaceFiles(full)
 	} else {
 		rels = []string{filepath.Base(full)}
+		single = true
 	}
 	out := []map[string]any{}
 	for _, rel := range rels {
-		abs := filepath.Join(full, rel)
+		abs := full
+		if !single {
+			abs = filepath.Join(full, rel)
+		}
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			return nil, "file_list: read " + rel + ": " + err.Error()
@@ -162,7 +167,7 @@ func (h *wsHub) cmdFileList(params map[string]json.RawMessage) (any, string) {
 			"content": base64.StdEncoding.EncodeToString(data),
 		})
 	}
-	return map[string]any{"files": out}, ""
+	return map[string]any{"files": out, "is_dir": info.IsDir()}, ""
 }
 
 func (h *wsHub) cmdJobs(_ map[string]json.RawMessage) (any, string) {

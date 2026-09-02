@@ -28,7 +28,6 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-COPY internal/ internal/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/worker-go .
 
 FROM ${REGISTRY}/library/debian:trixie-slim

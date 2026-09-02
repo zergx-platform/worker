@@ -1,10 +1,8 @@
 package main
 
-import (
-	"github.com/zergx-platform/worker/internal/env"
-)
+import ()
 
 var (
-	workdir = env.Or("WORKER_WORKSPACE_ROOT", "/root/workspace")
-	port    = env.Or("WORKER_PORT", "48080")
+	workdir = envOr("WORKER_WORKSPACE_ROOT", "/root/workspace")
+	port    = envOr("WORKER_PORT", "48080")
 )

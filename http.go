@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/zergx-platform/worker/internal/jsonwrite"
 )
 
 // logger replaces the previous hand-rolled slogJSON (which discarded the
@@ -20,19 +18,19 @@ func buildHandler(state *State) http.Handler {
 	jobs := state.jobs
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "healthy": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "healthy": true})
 	})
 	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": jobsResponse(store)})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobs": jobsResponse(store)})
 		case http.MethodDelete:
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			jid, _ := body["job_id"].(string)
-			jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": jobs.KillJob(jid)})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": jobs.KillJob(jid)})
 		default:
-			jsonwrite.JSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
 		}
 	})
 	mux.HandleFunc("/api/v1/sync/check", func(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +107,7 @@ func handleSyncCheck(w http.ResponseWriter, r *http.Request, st *State) {
 		Size int64  `json:"size"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&manifest); err != nil {
-		jsonwrite.JSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	manifestSet := map[string]bool{}
@@ -134,7 +132,7 @@ func handleSyncCheck(w http.ResponseWriter, r *http.Request, st *State) {
 	if rev != "" {
 		st.syncedRev = rev
 	}
-	jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "missing": missing, "extra": extra})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "missing": missing, "extra": extra})
 }
 
 func handleSyncFiles(w http.ResponseWriter, r *http.Request, st *State) {
@@ -144,13 +142,13 @@ func handleSyncFiles(w http.ResponseWriter, r *http.Request, st *State) {
 	if err != nil {
 		// Failed syncs are real errors: 5xx + {ok:false,error}, matching the
 		// gateway-wide status-code convention (memory/ops/jjlab).
-		jsonwrite.JSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	if rev != "" {
 		st.syncedRev = rev
 	}
-	jsonwrite.JSON(w, http.StatusOK, map[string]any{"ok": true, "files": n})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "files": n})
 }
 
 func handleFile(w http.ResponseWriter, r *http.Request, root string) {

@@ -124,6 +124,47 @@ func (h *wsHub) cmdFileDelete(params map[string]json.RawMessage) (any, string) {
 	return map[string]any{"ok": true, "path": p.Path}, ""
 }
 
+// cmdFileList walks the sandbox path (a file or directory) and returns every
+// file under it as {path, size, content(base64)} — relative to the workspace
+// root. Used by sandbox-port to expand a directory into a batch of file edits.
+func (h *wsHub) cmdFileList(params map[string]json.RawMessage) (any, string) {
+	var p struct {
+		Path string `json:"path"`
+	}
+	if err := decodeParams(params, &p); err != "" {
+		return nil, err
+	}
+	full, perr := resolveSandboxed(h.state.workdir, p.Path)
+	if perr != "" {
+		return nil, perr
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return nil, "file_list: " + err.Error()
+	}
+	var rels []string
+	if info.IsDir() {
+		rels = listWorkspaceFiles(full)
+	} else {
+		rels = []string{filepath.Base(full)}
+	}
+	out := []map[string]any{}
+	for _, rel := range rels {
+		abs := filepath.Join(full, rel)
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return nil, "file_list: read " + rel + ": " + err.Error()
+		}
+		// All returned paths are relative to the sandbox path given.
+		out = append(out, map[string]any{
+			"path":    rel,
+			"size":    len(data),
+			"content": base64.StdEncoding.EncodeToString(data),
+		})
+	}
+	return map[string]any{"files": out}, ""
+}
+
 func (h *wsHub) cmdJobs(_ map[string]json.RawMessage) (any, string) {
 	jobs := make([]map[string]any, 0)
 	for _, j := range h.state.store.ListJobs() {

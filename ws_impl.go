@@ -144,6 +144,8 @@ func (h *wsHub) dispatch(method string, params map[string]json.RawMessage) (any,
 		return h.cmdFileWrite(params)
 	case "file_delete":
 		return h.cmdFileDelete(params)
+	case "file_list":
+		return h.cmdFileList(params)
 	case "jobs":
 		return h.cmdJobs(params)
 	case "kill":

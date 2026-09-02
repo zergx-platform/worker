@@ -1,4 +1,4 @@
-module forgejo.develop.10.199.64.20.nip.io/zergx/worker-go
+module github.com/zergx-platform/worker
 
 go 1.26
 

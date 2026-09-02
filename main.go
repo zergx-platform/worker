@@ -1,7 +1,7 @@
 package main
 
 import (
-	"forgejo.develop.10.199.64.20.nip.io/zergx/worker-go/internal/env"
+	"github.com/zergx-platform/worker/internal/env"
 )
 
 var (

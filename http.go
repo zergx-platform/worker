@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"forgejo.develop.10.199.64.20.nip.io/zergx/go-shared/jsonwrite"
+	"forgejo.develop.10.199.64.20.nip.io/zergx/worker-go/internal/jsonwrite"
 )
 
 // logger replaces the previous hand-rolled slogJSON (which discarded the
